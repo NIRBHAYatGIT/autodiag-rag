@@ -1,0 +1,583 @@
+﻿<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoDiag-RAG — Vehicle Diagnostic Terminal</title>
+
+  <!-- Tailwind CSS (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            terminal: {
+              bg: '#0d1117',
+              surface: '#161b22',
+              border: '#30363d',
+              text: '#e6edf3',
+              muted: '#8b949e',
+              accent: '#58a6ff',
+              green: '#3fb950',
+              yellow: '#d29922',
+              red: '#f85149',
+              purple: '#bc8cff',
+            }
+          },
+          fontFamily: {
+            mono: ['JetBrains Mono', 'Fira Code', 'Consolas', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Alpine.js -->
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <!-- Marked.js for markdown rendering -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+
+  <!-- JetBrains Mono font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
+  <style>
+    * { scrollbar-width: thin; scrollbar-color: #30363d #0d1117; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0d1117; }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+    .terminal-glow {
+      box-shadow: 0 0 0 1px #30363d, 0 0 20px rgba(88,166,255,0.05);
+    }
+
+    .answer-content h1, .answer-content h2, .answer-content h3 {
+      color: #58a6ff;
+      font-weight: 600;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+    .answer-content h1 { font-size: 1.1rem; border-bottom: 1px solid #30363d; padding-bottom: 0.25rem; }
+    .answer-content h2 { font-size: 1rem; }
+    .answer-content h3 { font-size: 0.9rem; color: #bc8cff; }
+    .answer-content p { margin-bottom: 0.75rem; line-height: 1.7; color: #e6edf3; }
+    .answer-content ul, .answer-content ol { margin-left: 1.25rem; margin-bottom: 0.75rem; color: #e6edf3; }
+    .answer-content li { margin-bottom: 0.25rem; }
+    .answer-content strong { color: #ffa657; font-weight: 600; }
+    .answer-content em { color: #79c0ff; }
+    .answer-content code {
+      background: #1c2128;
+      color: #ff7b72;
+      padding: 0.1rem 0.35rem;
+      border-radius: 3px;
+      font-size: 0.85em;
+      border: 1px solid #30363d;
+    }
+    .answer-content pre {
+      background: #1c2128;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 1rem;
+      overflow-x: auto;
+      margin-bottom: 0.75rem;
+    }
+    .answer-content pre code { background: none; border: none; padding: 0; color: #e6edf3; }
+    .answer-content blockquote {
+      border-left: 3px solid #d29922;
+      padding-left: 0.75rem;
+      color: #d29922;
+      font-style: italic;
+      margin-bottom: 0.75rem;
+    }
+    .answer-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 0.75rem;
+      font-size: 0.85rem;
+    }
+    .answer-content th {
+      background: #1c2128;
+      color: #58a6ff;
+      padding: 0.5rem;
+      border: 1px solid #30363d;
+      text-align: left;
+    }
+    .answer-content td {
+      padding: 0.4rem 0.5rem;
+      border: 1px solid #30363d;
+      color: #e6edf3;
+    }
+    .answer-content tr:nth-child(even) td { background: #0d1117; }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    .cursor-blink { animation: blink 1s step-start infinite; }
+
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .slide-in { animation: slide-in 0.3s ease-out forwards; }
+
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid #30363d;
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .status-online { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+    .status-offline { background: #f85149; box-shadow: 0 0 6px #f85149; }
+    .status-checking { background: #d29922; box-shadow: 0 0 6px #d29922; animation: blink 1s step-start infinite; }
+  </style>
+</head>
+
+<body class="bg-terminal-bg text-terminal-text font-mono min-h-screen">
+
+<div
+  x-data="autodiag()"
+  x-init="init()"
+  class="flex flex-col min-h-screen max-w-5xl mx-auto px-4 py-6"
+>
+
+  <!-- ====== Header ====== -->
+  <header class="flex items-center justify-between mb-6 pb-4 border-b border-terminal-border">
+    <div class="flex items-center gap-3">
+      <!-- Window dots -->
+      <div class="flex gap-1.5">
+        <span class="w-3 h-3 rounded-full bg-terminal-red"></span>
+        <span class="w-3 h-3 rounded-full bg-terminal-yellow"></span>
+        <span class="w-3 h-3 rounded-full bg-terminal-green"></span>
+      </div>
+      <div>
+        <h1 class="text-terminal-accent font-semibold text-lg tracking-tight">AutoDiag-RAG</h1>
+        <p class="text-terminal-muted text-xs">Vehicle Diagnostic Terminal — Powered by RAG + LLaMA</p>
+      </div>
+    </div>
+
+    <!-- Status indicator -->
+    <div class="flex items-center gap-2 text-xs">
+      <span :class="statusDotClass" class="status-dot"></span>
+      <span :class="statusTextClass" x-text="statusLabel"></span>
+      <button
+        @click="checkHealth()"
+        class="ml-2 px-2 py-1 text-xs border border-terminal-border rounded hover:border-terminal-accent hover:text-terminal-accent transition-colors"
+        title="Refresh connection status"
+      >↻</button>
+    </div>
+  </header>
+
+  <!-- ====== Health Banner ====== -->
+  <div
+    x-show="health"
+    x-transition
+    class="mb-4 p-3 bg-terminal-surface border border-terminal-border rounded-lg text-xs grid grid-cols-2 sm:grid-cols-4 gap-2"
+  >
+    <div>
+      <span class="text-terminal-muted">Model</span><br>
+      <span class="text-terminal-green" x-text="health?.llm_model ?? '\u2014'"></span>
+    </div>
+    <div>
+      <span class="text-terminal-muted">Embedding</span><br>
+      <span class="text-terminal-purple text-[10px]" x-text="health?.embedding_model?.split('/').pop() ?? '\u2014'"></span>
+    </div>
+    <div>
+      <span class="text-terminal-muted">Docs Indexed</span><br>
+      <span class="text-terminal-yellow" x-text="health?.documents_indexed ?? 0"></span>
+    </div>
+    <div>
+      <span class="text-terminal-muted">Backend</span><br>
+      <span x-text="apiBase" class="text-terminal-muted text-[10px] break-all"></span>
+    </div>
+  </div>
+
+  <!-- ====== Chat Log ====== -->
+  <main
+    id="chat-log"
+    class="flex-1 overflow-y-auto space-y-4 mb-4 pr-1"
+    style="min-height: 300px; max-height: 60vh;"
+  >
+    <!-- Welcome message -->
+    <div class="p-4 bg-terminal-surface border border-terminal-border rounded-lg slide-in">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-terminal-green text-xs font-semibold">SYSTEM</span>
+        <span class="text-terminal-muted text-xs">AutoDiag-RAG v1.0.0</span>
+      </div>
+      <p class="text-terminal-muted text-sm">
+        Welcome to the <span class="text-terminal-accent">AutoDiag-RAG</span> diagnostic terminal.
+        Ask any question about Royal Enfield Hunter 350 faults, maintenance, error codes, or procedures.
+      </p>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <template x-for="q in sampleQueries" :key="q">
+          <button
+            @click="submitQuery(q)"
+            class="text-xs px-2 py-1 border border-terminal-border rounded hover:border-terminal-accent hover:text-terminal-accent transition-colors text-terminal-muted"
+            x-text="q"
+          ></button>
+        </template>
+      </div>
+    </div>
+
+    <!-- Chat messages -->
+    <template x-for="(msg, idx) in messages" :key="idx">
+      <div class="slide-in">
+
+        <!-- User message -->
+        <div class="flex justify-end mb-2">
+          <div class="max-w-2xl p-3 bg-terminal-surface border border-terminal-border rounded-lg">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-terminal-yellow text-xs font-semibold">YOU</span>
+              <span class="text-terminal-muted text-xs" x-text="msg.timestamp"></span>
+            </div>
+            <p class="text-sm" x-text="msg.query"></p>
+          </div>
+        </div>
+
+        <!-- Loading indicator -->
+        <div x-show="msg.loading" class="flex items-center gap-3 p-3 bg-terminal-surface border border-terminal-border rounded-lg max-w-xs">
+          <div class="spinner"></div>
+          <span class="text-terminal-muted text-xs">Retrieving &amp; generating...</span>
+        </div>
+
+        <!-- Answer -->
+        <div x-show="!msg.loading && msg.answer" class="p-4 bg-terminal-surface border border-terminal-border rounded-lg terminal-glow">
+          <!-- Answer header -->
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+              <span class="text-terminal-accent text-xs font-semibold">AUTODIAG</span>
+              <span class="text-terminal-muted text-xs" x-text="msg.model"></span>
+            </div>
+            <div class="flex items-center gap-3 text-xs text-terminal-muted">
+              <span>⚡ <span x-text="msg.total_ms"></span>ms</span>
+              <button
+                @click="msg.showSources = !msg.showSources"
+                class="text-terminal-muted hover:text-terminal-accent transition-colors"
+              >
+                <span x-text="msg.showSources ? 'Hide' : 'Sources'"></span>
+                (<span x-text="msg.sources?.length ?? 0"></span>)
+              </button>
+              <button
+                @click="copyToClipboard(msg.answer)"
+                class="hover:text-terminal-accent transition-colors"
+                title="Copy answer"
+              >⧉</button>
+            </div>
+          </div>
+
+          <!-- Rendered markdown answer -->
+          <div
+            class="answer-content text-sm leading-relaxed"
+            x-html="msg.renderedHtml || renderMarkdown(msg.answer)"
+          ></div>
+
+          <!-- Latency stats -->
+          <div class="mt-3 pt-3 border-t border-terminal-border flex gap-4 text-xs text-terminal-muted">
+            <span>🔍 Retrieval: <span class="text-terminal-yellow" x-text="msg.retrieval_ms"></span>ms</span>
+            <span>🤖 Generation: <span class="text-terminal-purple" x-text="msg.generation_ms"></span>ms</span>
+            <span>📚 Sources: <span class="text-terminal-green" x-text="msg.sources?.length ?? 0"></span></span>
+          </div>
+
+          <!-- Source chunks (collapsible) -->
+          <div x-show="msg.showSources" x-transition class="mt-3 space-y-2">
+            <p class="text-xs text-terminal-muted font-semibold uppercase tracking-wider">Retrieved Chunks</p>
+            <template x-for="(src, si) in msg.sources" :key="si">
+              <div class="p-2 bg-terminal-bg border border-terminal-border rounded text-xs">
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-terminal-purple">#<span x-text="src.chunk_index"></span></span>
+                  <span class="text-terminal-green">score: <span x-text="src.score"></span></span>
+                </div>
+                <p class="text-terminal-muted line-clamp-3" x-text="src.content"></p>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Error -->
+        <div
+          x-show="!msg.loading && msg.error"
+          class="p-3 bg-red-950 border border-terminal-red rounded-lg text-terminal-red text-sm"
+          x-text="msg.error"
+        ></div>
+
+      </div>
+    </template>
+  </main>
+
+  <!-- ====== Input Bar ====== -->
+  <div class="border border-terminal-border rounded-lg bg-terminal-surface terminal-glow">
+    <div class="flex items-end gap-2 p-3">
+      <span class="text-terminal-green text-sm pb-0.5 flex-shrink-0">&#x276F;</span>
+      <textarea
+        x-model="inputQuery"
+        @keydown.enter.exact.prevent="handleSubmit()"
+        @keydown.shift.enter=""
+        placeholder="Describe the fault or ask a diagnostic question... (Enter to send, Shift+Enter for new line)"
+        rows="2"
+        class="flex-1 bg-transparent text-terminal-text placeholder-terminal-muted text-sm resize-none focus:outline-none leading-relaxed"
+        :disabled="isLoading"
+      ></textarea>
+      <button
+        @click="handleSubmit()"
+        :disabled="isLoading || !inputQuery.trim()"
+        class="flex-shrink-0 px-4 py-2 bg-terminal-accent text-terminal-bg rounded font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-400 transition-colors"
+      >
+        <span x-show="!isLoading">Send</span>
+        <span x-show="isLoading" class="flex items-center gap-1">
+          <div class="spinner" style="width:14px;height:14px;border-width:2px;"></div>
+        </span>
+      </button>
+    </div>
+
+    <!-- Ingest bar -->
+    <div class="border-t border-terminal-border px-3 py-2 flex items-center gap-3">
+      <span class="text-terminal-muted text-xs">Ingest manual:</span>
+      <input
+        type="file"
+        accept=".md,.pdf,.txt"
+        @change="handleFileSelect($event)"
+        class="text-xs text-terminal-muted file:mr-2 file:py-1 file:px-2 file:border file:border-terminal-border file:rounded file:bg-terminal-bg file:text-terminal-accent file:text-xs file:cursor-pointer"
+      />
+      <button
+        @click="uploadFile()"
+        :disabled="!selectedFile || uploadLoading"
+        class="px-3 py-1 text-xs border border-terminal-border rounded hover:border-terminal-accent hover:text-terminal-accent transition-colors disabled:opacity-40"
+      >
+        <span x-show="!uploadLoading">Upload &amp; Index</span>
+        <span x-show="uploadLoading">Indexing...</span>
+      </button>
+      <span x-show="uploadStatus" class="text-xs" :class="uploadStatusColor" x-text="uploadStatus"></span>
+    </div>
+  </div>
+
+  <!-- ====== Footer ====== -->
+  <footer class="mt-4 text-center text-xs text-terminal-muted">
+    AutoDiag-RAG • RAG Pipeline: Hybrid Dense+Sparse Retrieval → FlashRank → LLaMA-3.1
+    • <a href="http://localhost:8000/docs" target="_blank" class="hover:text-terminal-accent transition-colors">API Docs</a>
+  </footer>
+
+</div>
+
+<script>
+function autodiag() {
+  return {
+    // State
+    apiBase: window.location.origin.startsWith('http') ? window.location.origin : 'http://127.0.0.1:8000',
+    inputQuery: '',
+    messages: [],
+    isLoading: false,
+    health: null,
+    connectionStatus: 'checking', // 'online' | 'offline' | 'checking'
+    selectedFile: null,
+    uploadLoading: false,
+    uploadStatus: '',
+    uploadStatusColor: 'text-terminal-green',
+    sampleQueries: [
+      'Engine cranks but won\'t start',
+      'Black smoke from exhaust',
+      'ABS warning light on',
+      'Clutch cable adjustment',
+      'DTC P0335 code',
+    ],
+
+    // Computed
+    get statusLabel() {
+      return { online: 'Connected', offline: 'Disconnected', checking: 'Connecting...' }[this.connectionStatus] ?? 'Unknown';
+    },
+    get statusDotClass() {
+      return { online: 'status-online', offline: 'status-offline', checking: 'status-checking' }[this.connectionStatus] ?? '';
+    },
+    get statusTextClass() {
+      return {
+        online: 'text-green-400',
+        offline: 'text-red-400',
+        checking: 'text-yellow-400',
+      }[this.connectionStatus] ?? 'text-gray-400';
+    },
+
+    // Init
+    async init() {
+      try {
+        if (typeof marked !== 'undefined' && marked.setOptions) {
+          marked.setOptions({ breaks: true, gfm: true });
+        }
+      } catch (e) {
+        console.warn('marked.setOptions init error:', e);
+      }
+      await this.checkHealth();
+    },
+
+    // Health check
+    async checkHealth() {
+      this.connectionStatus = 'checking';
+      try {
+        const res = await fetch(`${this.apiBase}/health`, { signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          this.health = await res.json();
+          this.connectionStatus = 'online';
+        } else {
+          this.connectionStatus = 'offline';
+        }
+      } catch {
+        this.connectionStatus = 'offline';
+        this.health = null;
+      }
+    },
+
+    // Submit query
+    handleSubmit() {
+      const q = this.inputQuery.trim();
+      if (!q || this.isLoading) return;
+      this.submitQuery(q);
+      this.inputQuery = '';
+    },
+
+    async submitQuery(query) {
+      const msgIndex = this.messages.length;
+      this.messages.push({
+        query,
+        timestamp: new Date().toLocaleTimeString(),
+        loading: true,
+        answer: '',
+        renderedHtml: '',
+        sources: [],
+        model: '',
+        retrieval_ms: 0,
+        generation_ms: 0,
+        total_ms: 0,
+        showSources: false,
+        error: '',
+      });
+      this.messages = [...this.messages];
+      this.isLoading = true;
+      this.scrollToBottom();
+
+      try {
+        const res = await fetch(`${this.apiBase}/diagnose`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query }),
+          signal: AbortSignal.timeout(60000),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          this.messages[msgIndex].error = `Error ${res.status}: ${err.detail ?? 'Unknown error'}`;
+        } else {
+          const data = await res.json();
+          this.messages[msgIndex].answer = data.answer;
+          this.messages[msgIndex].renderedHtml = this.renderMarkdown(data.answer);
+          this.messages[msgIndex].sources = data.sources || [];
+          this.messages[msgIndex].model = data.model || '';
+          this.messages[msgIndex].retrieval_ms = data.retrieval_ms || 0;
+          this.messages[msgIndex].generation_ms = data.generation_ms || 0;
+          this.messages[msgIndex].total_ms = data.total_ms || 0;
+        }
+      } catch (e) {
+        this.messages[msgIndex].error = `Network error: ${e.message}. Is the backend running at ${this.apiBase}?`;
+        this.connectionStatus = 'offline';
+      } finally {
+        this.messages[msgIndex].loading = false;
+        this.isLoading = false;
+        this.messages = [...this.messages];
+        this.scrollToBottom();
+      }
+    },
+
+    // File upload
+    handleFileSelect(event) {
+      this.selectedFile = event.target.files[0] ?? null;
+      this.uploadStatus = '';
+    },
+
+    async uploadFile() {
+      if (!this.selectedFile) return;
+      this.uploadLoading = true;
+      this.uploadStatus = '';
+
+      const formData = new FormData();
+      formData.append('file', this.selectedFile);
+
+      try {
+        const res = await fetch(`${this.apiBase}/ingest/upload`, {
+          method: 'POST',
+          body: formData,
+          signal: AbortSignal.timeout(120000),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          this.uploadStatus = `✓ Indexed ${data.chunks_indexed} chunks`;
+          this.uploadStatusColor = 'text-terminal-green';
+          await this.checkHealth();
+        } else {
+          this.uploadStatus = `✗ ${data.detail ?? 'Upload failed'}`;
+          this.uploadStatusColor = 'text-terminal-red';
+        }
+      } catch (e) {
+        this.uploadStatus = `✗ ${e.message}`;
+        this.uploadStatusColor = 'text-terminal-red';
+      } finally {
+        this.uploadLoading = false;
+      }
+    },
+
+    // Helpers
+    renderMarkdown(text) {
+      if (!text) return '';
+      try {
+        if (typeof marked !== 'undefined') {
+          if (typeof marked.parse === 'function') {
+            return marked.parse(text);
+          }
+          if (typeof marked === 'function') {
+            return marked(text);
+          }
+        }
+      } catch (err) {
+        console.warn('Marked parse error, using fallback:', err);
+      }
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n\n/g, '<br><br>')
+        .replace(/\n/g, '<br>');
+    },
+
+    async copyToClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // Fallback: textarea trick
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    },
+
+    scrollToBottom() {
+      this.$nextTick(() => {
+        const el = document.getElementById('chat-log');
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    },
+  };
+}
+</script>
+
+</body>
+</html>

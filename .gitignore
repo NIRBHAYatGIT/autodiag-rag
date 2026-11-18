@@ -1,0 +1,21 @@
+# Environment variables (NEVER commit secrets!)
+.env
+
+# Python Virtual Environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ChromaDB local vector store
+chroma_db/
+
+# OS / Editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
