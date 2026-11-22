@@ -10,8 +10,13 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from dataclasses import dataclass, field
 from typing import List, Optional
+
+import torch
+# Restrict PyTorch to single-thread and low memory footprint for cloud free-tier (512MB RAM)
+torch.set_num_threads(1)
 
 from langchain_chroma import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -56,7 +61,7 @@ class HybridRetriever:
         self._embeddings = HuggingFaceEmbeddings(
             model_name=embedding_model,
             model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
+            encode_kwargs={"normalize_embeddings": True, "batch_size": 8},
         )
 
         self._vector_store = Chroma(

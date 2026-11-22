@@ -137,11 +137,15 @@ class AutoDiagPipeline:
             chunk_overlap=s.chunk_overlap,
         )
 
-        # Embed + store
+        # Embed + store in small batches to stay within cloud RAM limits (512MB)
         store = self._retriever.get_vector_store()
-        texts = [c.page_content for c in chunks]
-        metadatas = [c.metadata for c in chunks]
-        store.add_texts(texts=texts, metadatas=metadatas)
+        batch_size = 16
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i : i + batch_size]
+            store.add_texts(
+                texts=[c.page_content for c in batch],
+                metadatas=[c.metadata for c in batch],
+            )
 
         # Rebuild BM25 over the full collection
         self._rebuild_bm25_from_store()
