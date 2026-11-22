@@ -18,12 +18,8 @@ COPY frontend /app/frontend
 
 WORKDIR /app/backend
 
-# Pre-cache embedding model and pre-index sample manual into container image
+# Pre-cache embedding model into container image for instant boot
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
-RUN python -c "from app.config import Settings; from app.pipeline import AutoDiagPipeline; p = AutoDiagPipeline(Settings()); p.initialise(); p.ingest('sample_manual.md')"
-
-# Disable offline HF check at runtime so startup is instant
-ENV HF_HUB_OFFLINE=1
 
 EXPOSE 8000
 

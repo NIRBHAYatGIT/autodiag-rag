@@ -7,7 +7,8 @@ Builds a structured RAG prompt that instructs the model to cite sources.
 from __future__ import annotations
 
 import logging
-from typing import List
+import os
+from typing import List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
@@ -59,23 +60,47 @@ class DiagnosticGenerator:
 
     def __init__(
         self,
-        groq_api_key: str,
-        model: str = "llama-3.1-8b-instant",
+        groq_api_key: str = "",
+        model: str = "openai/gpt-oss-120b",
         max_tokens: int = 1024,
         temperature: float = 0.2,
     ) -> None:
         self._model_name = model
-        self._llm = ChatGroq(
-            api_key=groq_api_key,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        logger.info("DiagnosticGenerator initialised with model=%s", model)
+        self._api_key = groq_api_key or os.environ.get("GROQ_API_KEY", "")
+        self._max_tokens = max_tokens
+        self._temperature = temperature
+        self._llm: Optional[ChatGroq] = None
+
+        if self._api_key:
+            try:
+                self._llm = ChatGroq(
+                    api_key=self._api_key,
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                logger.info("DiagnosticGenerator initialised with model=%s", model)
+            except Exception as e:
+                logger.warning("ChatGroq immediate init skipped: %s", e)
 
     @property
     def model_name(self) -> str:
         return self._model_name
+
+    def _get_llm(self) -> ChatGroq:
+        if self._llm is None:
+            key = self._api_key or os.environ.get("GROQ_API_KEY", "")
+            if not key:
+                raise ValueError(
+                    "GROQ_API_KEY is not configured. Please set the GROQ_API_KEY environment variable."
+                )
+            self._llm = ChatGroq(
+                api_key=key,
+                model=self._model_name,
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
+            )
+        return self._llm
 
     def generate(
         self,
@@ -107,7 +132,8 @@ class DiagnosticGenerator:
         ]
 
         logger.debug("Sending %d context chunks to LLM.", len(ranked_results))
-        response = self._llm.invoke(messages)
+        llm = self._get_llm()
+        response = llm.invoke(messages)
         answer = response.content
         logger.info("LLM generated %d chars.", len(answer))
         return answer
