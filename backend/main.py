@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -48,14 +49,46 @@ logger = logging.getLogger("autodiag.main")
 # Application state
 # ---------------------------------------------------------------------------
 _pipeline: AutoDiagPipeline | None = None
+_init_thread: threading.Thread | None = None
+
+
+def _bg_initialize(pipeline: AutoDiagPipeline, sample_path: Path) -> None:
+    """Run model loading and initial indexing in a background thread."""
+    try:
+        logger.info("Background initialization started: loading models and vector store...")
+        pipeline.initialise()
+
+        # Auto-index sample manual if collection is empty
+        if pipeline.document_count == 0 and sample_path.exists():
+            logger.info("Vector store empty — auto-indexing %s", sample_path.name)
+            try:
+                n = pipeline.ingest(sample_path)
+                logger.info("Auto-indexed %d chunks from %s", n, sample_path.name)
+            except Exception as exc:
+                logger.error("Auto-index failed: %s", exc)
+        else:
+            logger.info("Vector store has %d documents. Skipping auto-index.", pipeline.document_count)
+
+        logger.info("=== AutoDiag-RAG background initialization complete ===")
+    except Exception as exc:
+        logger.exception("Background initialization error: %s", exc)
 
 
 def get_pipeline() -> AutoDiagPipeline:
-    if _pipeline is None or not _pipeline.is_ready:
+    global _pipeline, _init_thread
+    if _pipeline is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Pipeline is not yet initialised. Please wait for startup to complete.",
+            detail="Pipeline is not created.",
         )
+    if not _pipeline.is_ready:
+        if _init_thread and _init_thread.is_alive():
+            _init_thread.join(timeout=20)
+        if not _pipeline.is_ready:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Knowledge base is still loading into memory. Please retry in a few seconds.",
+            )
     return _pipeline
 
 
@@ -64,26 +97,22 @@ def get_pipeline() -> AutoDiagPipeline:
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _pipeline
+    global _pipeline, _init_thread
     settings = get_settings()
-    logger.info("=== AutoDiag-RAG starting up ===")
+    logger.info("=== AutoDiag-RAG starting up (fast port bind) ===")
 
     _pipeline = AutoDiagPipeline(settings)
-    _pipeline.initialise()
-
-    # Auto-index sample manual if collection is empty
     sample_path = Path(__file__).parent / "sample_manual.md"
-    if _pipeline.document_count == 0 and sample_path.exists():
-        logger.info("Vector store empty — auto-indexing %s", sample_path.name)
-        try:
-            n = _pipeline.ingest(sample_path)
-            logger.info("Auto-indexed %d chunks from %s", n, sample_path.name)
-        except Exception as exc:
-            logger.error("Auto-index failed: %s", exc)
-    else:
-        logger.info("Vector store has %d documents. Skipping auto-index.", _pipeline.document_count)
 
-    logger.info("=== AutoDiag-RAG ready ===")
+    # Start heavy initialization in background so Uvicorn binds port instantly!
+    _init_thread = threading.Thread(
+        target=_bg_initialize,
+        args=(_pipeline, sample_path),
+        daemon=True,
+    )
+    _init_thread.start()
+
+    logger.info("=== Port open and accepting connections ===")
     yield
 
     logger.info("=== AutoDiag-RAG shutting down ===")
