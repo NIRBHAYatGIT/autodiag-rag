@@ -7,7 +7,7 @@ sdk: docker
 app_port: 7860
 pinned: false
 license: mit
-short_description: RAG-based automotive diagnostic assistant for Royal Enfield Hunter 350
+short_description: Automotive diagnostic assistant for RE Hunter 350
 ---
 
 # AutoDiag-RAG 🔧
